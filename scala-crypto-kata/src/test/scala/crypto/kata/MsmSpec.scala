@@ -51,6 +51,64 @@ object MsmSpec extends ZIOSpecDefault {
             Msm.naive(xs ++ ys) == (Msm.naive(xs) + Msm.naive(ys))
           )
         }
+      },
+
+      test("bucketed MSM handles zero scalars") {
+        check(genPoint, Gen.int(1, 8)) { (p, window) =>
+          val terms = List(Msm.Term(0, p))
+          assertTrue(Msm.bucketed(terms, window) == Point.Infinity)
+        }
+      },
+
+      test("bucketed MSM handles infinity points") {
+        check(genScalar, Gen.int(1, 8)) { (k, window) =>
+          val terms = List(Msm.Term(k, Point.Infinity))
+          assertTrue(Msm.bucketed(terms, window) == Point.Infinity)
+        }
+      },
+
+      test("bucketed MSM handles cancellation inside buckets") {
+        check(genScalar, genPoint, Gen.int(1, 8)) { (k, p, window) =>
+          val terms =
+            List(
+              Msm.Term(k, p),
+              Msm.Term(k, -p)
+            )
+
+          assertTrue(Msm.bucketed(terms, window) == Point.Infinity)
+        }
+      },
+
+      test("bucketed MSM handles duplicate bases") {
+        check(genScalar, genScalar, genPoint, Gen.int(1, 8)) { (m, n, p, window) =>
+          val terms =
+            List(
+              Msm.Term(m, p),
+              Msm.Term(n, p)
+            )
+
+          assertTrue(
+            Msm.bucketed(terms, window) ==
+              ScalarMult.multiply(m + n, p)
+          )
+        }
+      },
+
+      test("bucket cancellation does not disturb other buckets") {
+        check(Gen.int(1, 7), Gen.int(1, 7), genPoint, genPoint) {
+          (cancelDigit, liveDigit, p, q) =>
+            val terms =
+              List(
+                Msm.Term(BigInt(cancelDigit), p),
+                Msm.Term(BigInt(cancelDigit), -p),
+                Msm.Term(BigInt(liveDigit), q)
+              )
+
+            assertTrue(
+              Msm.bucketed(terms, window = 3) ==
+                ScalarMult.multiply(BigInt(liveDigit), q)
+            )
+        }
       }
     )
 }
