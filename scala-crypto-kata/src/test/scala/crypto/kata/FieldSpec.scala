@@ -94,6 +94,44 @@ object FieldSpec extends ZIOSpecDefault {
         val failure = Try(Field.modInverse(6, 9)).isFailure
 
         assertTrue(failure)
+      },
+
+      test("batchInverseNonZero agrees with individual inverses") {
+        val genNonZeroFields = Gen.chunkOfBounded(0, 32)(genF.filter(_ != Field.zero)).map(_.toVector)
+
+        check(genNonZeroFields) { values =>
+          val expected = values.map(_.inverseNonZero)
+          val actual = Field.batchInverseNonZero(values)
+
+          assertTrue(actual == expected)
+        }
+      },
+
+      test("batchInverse handles zeros safely") {
+        val genFields = Gen.chunkOfBounded(0, 32)(genF).map(_.toVector)
+        check(genFields) { values =>
+          val expected =
+            values.map {
+              case Field.zero => None
+              case x          => Some(x.inverseNonZero)
+            }
+          val actual = Field.batchInverse(values)
+
+          assertTrue(actual == expected)
+        }
+      },
+
+      test("batchInverseNonZero outputs multiplicative inverses") {
+        val genNonZeroFields = Gen.chunkOfBounded(0, 32)(genF.filter(_ != Field.zero)).map(_.toVector)
+        check(genNonZeroFields) { values =>
+          val inverses = Field.batchInverseNonZero(values)
+
+          assertTrue(
+            values.zip(inverses).forall { case (x, inv) =>
+              x * inv == Field.one
+            }
+          )
+        }
       }
     )
 }
