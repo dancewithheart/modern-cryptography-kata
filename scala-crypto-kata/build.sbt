@@ -2,6 +2,7 @@ val zioVersion = "2.1.26"
 
 lazy val root = project
   .in(file("."))
+  .enablePlugins(JmhPlugin)
   .settings(
     name := "scala-crypto-kata",
     organization := "crypto.kata",
