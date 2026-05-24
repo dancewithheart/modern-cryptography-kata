@@ -109,6 +109,28 @@ object MsmSpec extends ZIOSpecDefault {
                 ScalarMult.multiply(BigInt(liveDigit), q)
             )
         }
+      },
+
+      test("weighted bucket sum agrees with direct bucket weighting") {
+        val genBuckets = Gen.chunkOfBounded(2, 16)(genPoint).map(_.toArray)
+
+        check(genBuckets) { buckets =>
+          val direct = buckets.zipWithIndex.foldLeft(Point.Infinity) {
+            case (acc, (bucket, digit)) =>
+              acc + ScalarMult.multiply(BigInt(digit), bucket)
+          }
+          val optimized = Msm.weightedBucketSum(buckets)
+
+          assertTrue(optimized == direct)
+        }
+      },
+
+      test("optimized bucket summation agrees with direct bucket weighting") {
+        check(genTerms, Gen.int(1, 8)) { (terms, window) =>
+          assertTrue(
+            Msm.bucketed(terms, window) == Msm.bucketedDirect(terms, window)
+          )
+        }
       }
     )
 }

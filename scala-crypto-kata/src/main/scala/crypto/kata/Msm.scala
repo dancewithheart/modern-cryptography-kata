@@ -15,6 +15,107 @@ object Msm {
       acc + ScalarMult.multiplySlow(k, p)
     }
 
+  def bucketed(terms: Iterable[Term], window: Int): Point = bucketedPippenger(terms, window)
+
+  def bucketedPippenger(terms: Iterable[Term], window: Int): Point = {
+    require(window > 0, s"window must be positive, got $window")
+
+    // Remove terms that can never contribute:
+    //   0 * P = O
+    //   k * O = O
+    val normalizedTerms = terms.toVector.filter { case Term(k, p) =>
+        k != 0 && p != Point.Infinity }
+
+    if (normalizedTerms.isEmpty) Point.Infinity
+    else {
+      val radix: BigInt = BigInt(1) << window
+
+      require(
+        radix <= Int.MaxValue,
+        s"window too large for array-backed buckets: window=$window, radix=$radix"
+      )
+
+      val bucketCount: Int = radix.toInt
+      val maxScalar: BigInt = normalizedTerms.map(_.scalar).max
+      val windows: Int = scalarWindowCount(maxScalar, window)
+
+      var result: Point = Point.Infinity
+      var windowIndex = 0
+      while (windowIndex < windows) {
+        val buckets: Array[Point] = Array.fill(bucketCount)(Point.Infinity)
+
+        // Bucket accumulation:
+        //
+        // For this window, group points by the scalar digit appearing
+        // in that window.
+        //
+        // Example with window = 3:
+        //   scalar digit 5 means:
+        //     bucket[5] += point
+        // Zero digit is skipped because:
+        //   0 * P = O
+        normalizedTerms.foreach { case Term(scalar, point) =>
+          val digit = windowDigit(scalar, window, windowIndex).toInt
+
+          if (digit != 0) {
+            // Cancellation can happen here implicitly:
+            //   bucket[d] = P
+            //   point     = -P
+            // then:
+            //   bucket[d] + point = O
+            buckets(digit) = buckets(digit) + point
+          }
+        }
+
+        val windowSum = weightedBucketSum(buckets)
+        val shift = BigInt(1) << (window * windowIndex)
+        val shiftedWindowSum = ScalarMult.multiply(shift, windowSum)
+        result = result + shiftedWindowSum
+        windowIndex = windowIndex + 1
+      }
+      result
+    }
+  }
+
+  // Computes:
+  //   1*bucket[1] + 2*bucket[2] + ... + (n-1)*bucket[n-1]
+  //
+  // without calling scalar multiplication for every bucket.
+  // Running-sum trick:
+  //   running = O
+  //   sum     = O
+  //
+  //   for digit from max down to 1:
+  //     running += bucket[digit]
+  //     sum     += running
+  //
+  // Example with buckets 1, 2, 3:
+  //
+  //   digit = 3:
+  //     running = bucket[3]
+  //     sum     = bucket[3]
+  //
+  //   digit = 2:
+  //     running = bucket[3] + bucket[2]
+  //     sum     = 2*bucket[3] + bucket[2]
+  //
+  //   digit = 1:
+  //     running = bucket[3] + bucket[2] + bucket[1]
+  //     sum     = 3*bucket[3] + 2*bucket[2] + bucket[1]
+  private[kata] def weightedBucketSum(buckets: Array[Point]): Point = {
+    var running: Point = Point.Infinity
+    var sum: Point = Point.Infinity
+    var digit = buckets.length - 1
+
+    while (digit >= 1) {
+      running = running + buckets(digit)
+      sum = sum + running
+      digit = digit - 1
+    }
+
+    sum
+  }
+
   // Bucketed MSM
   // reuse work by grouping points that have the same scalar digit
   //   bucketed(terms, window) == naive(terms)
@@ -35,7 +136,7 @@ object Msm {
   // 6P has digit 1 -> bucket[1] += P
   // 3Q has digit 0 -> skipped
   // result: (2P + 3Q) + 4P = 6P + 3Q
-  def bucketed(terms: Iterable[Term], window: Int): Point = {
+  def bucketedDirect(terms: Iterable[Term], window: Int): Point = {
     require(window > 0, s"window must be positive, got $window")
 
     // Remove terms that can never contribute:
