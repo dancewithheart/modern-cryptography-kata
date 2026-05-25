@@ -7,23 +7,19 @@ object PedersenSpec extends ZIOSpecDefault {
 
   private val order: BigInt = GroupUtil.orderOf(g)
 
-  private val alpha: BigInt = {
-    // Choose α invertible modulo order.
-    //
-    // For a toy curve, order may be composite, so avoid assuming every
-    // non-zero scalar is invertible.
-    val candidate = (BigInt(2) until order).find(_.gcd(order) == 1)
+  private val alpha: BigInt =
+    GroupUtil.findInvertibleScalarMod(order)
 
-    candidate.getOrElse {
-      throw new IllegalStateException(s"could not find invertible alpha modulo $order")
-    }
-  }
+  private val h: Point =
+    ScalarMult.multiply(alpha, g)
 
-  private val h: Point = ScalarMult.multiply(alpha, g)
+  private val params: Pedersen.Parameters =
+    Pedersen.Parameters(g = g, h = h, order = order)
 
-  private val params: Pedersen.Parameters = Pedersen.Parameters(g = g, h = h, order = order)
+  private val genScalar: Gen[Any, BigInt] =
+    Gen.bigInt(BigInt(0), order - 1)
 
-  private val genScalar: Gen[Any, BigInt] = Gen.bigInt(BigInt(0), order - 1)
+  private val genNonZeroScalar: Gen[Any, BigInt] = Gen.bigInt(BigInt(1), order - 1)
 
   private val genOpening: Gen[Any, Pedersen.Opening] =
     for {
@@ -45,10 +41,13 @@ object PedersenSpec extends ZIOSpecDefault {
       test("commitment is computed as mG + rH") {
         check(genOpening) { opening =>
           val expected =
-            Msm.naive(List(
-              Msm.Term(opening.message, params.g),
-              Msm.Term(opening.randomness, params.h)
-            ))
+            Msm.bucketedPippenger(
+              terms = List(
+                Msm.Term(opening.message.mod(order), params.g),
+                Msm.Term(opening.randomness.mod(order), params.h)
+              ),
+              window = 3
+            )
 
           assertTrue(
             Pedersen.commit(params, opening) == expected
@@ -62,6 +61,26 @@ object PedersenSpec extends ZIOSpecDefault {
           val rhs = Pedersen.commit(params, x) + Pedersen.commit(params, y)
 
           assertTrue(lhs == rhs)
+        }
+      },
+
+      test("different randomness changes commitment for fixed message") {
+        check(genScalar, genScalar, genNonZeroScalar) { (message, randomness, delta) =>
+          val first =
+            Pedersen.Opening(
+              message = message,
+              randomness = randomness
+            )
+
+          val second =
+            Pedersen.Opening(
+              message = message,
+              randomness = (randomness + delta).mod(order)
+            )
+
+          assertTrue(
+            Pedersen.commit(params, first) != Pedersen.commit(params, second)
+          )
         }
       },
 
@@ -83,8 +102,8 @@ object PedersenSpec extends ZIOSpecDefault {
         }
       },
 
-      test("forged opening may use a different message") {
-        check(genOpening, genScalar.filter(m => m != BigInt(0))) { (original, delta) =>
+      test("forged opening can use a different message") {
+        check(genOpening, genNonZeroScalar) { (original, delta) =>
           val newMessage = (original.message + delta).mod(order)
 
           val forged = Pedersen.forgeOpeningWhenRelationKnown(

@@ -49,12 +49,12 @@ object Pedersen {
     val originalLinearCombination =
       (original.message + alphaMod * original.randomness).mod(params.order)
 
-    val newRandomness =
+    val forgedRandomness =
       ((originalLinearCombination - newMessage) * alphaInv).mod(params.order)
 
     Opening(
       message = newMessage.mod(params.order),
-      randomness = newRandomness
+      randomness = forgedRandomness
     )
   }
 }
