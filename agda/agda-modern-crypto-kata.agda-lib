@@ -1,0 +1,3 @@
+name: agda-f17
+include: src
+depend: standard-library
